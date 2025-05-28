@@ -44,7 +44,19 @@ public class MainResource {
             Set<String> kcClientIds = kcClients.stream()
                     .map(ClientRepresentation::getClientId)
                     .collect(Collectors.toSet());
-
+            // Add additional attributes for Keycloak clients
+            Map<String, Map<String, Object>> kcClientDetails = kcClients.stream()
+                    .collect(Collectors.toMap(
+                            ClientRepresentation::getClientId,
+                            kcClient -> {
+                                Map<String, Object> details = new HashMap<>();
+                                details.put("client_id", kcClient.getClientId());
+                                details.put("name", kcClient.getName());
+                                details.put("base_url", kcClient.getBaseUrl());
+                                details.put("enabled", kcClient.isEnabled());
+                                return details;
+                            }
+                    ));
             // 3. Obtener clientes de la base de datos
             Map<String, Map<String, Object>> dbClients = new HashMap<>();
             try (Connection conn = dataSource.getConnection();
@@ -101,7 +113,31 @@ public class MainResource {
                         return mismatch;
                     })
                     .collect(Collectors.toList());
+            List<Map<String, Object>> baseUrlMismatch = inBoth.stream()
+                    .filter(clientId -> {
+                        Map<String, Object> dbClient = dbClients.get(clientId);
+                        String dbBaseUrl = (String) dbClient.get("base_url");
+                        String kcBaseUrl = kcClients.stream()
+                                .filter(kcClient -> kcClient.getClientId().equals(clientId))
+                                .findFirst()
+                                .map(ClientRepresentation::getBaseUrl)
+                                .orElse(null);
+                        return !Objects.equals(dbBaseUrl, kcBaseUrl);
+                    })
+                    .map(clientId -> {
+                        Map<String, Object> mismatch = new HashMap<>();
+                        mismatch.put("client_id", clientId);
+                        mismatch.put("db_base_url", dbClients.get(clientId).get("base_url"));
+                        mismatch.put("kc_base_url", kcClients.stream()
+                                .filter(kcClient -> kcClient.getClientId().equals(clientId))
+                                .findFirst()
+                                .map(ClientRepresentation::getBaseUrl)
+                                .orElse(null));
+                        return mismatch;
+                    })
+                    .collect(Collectors.toList());
 
+            result.put("base_url_mismatch", baseUrlMismatch);
             result.put("enabled_mismatch", enabledMismatch);
             result.put("only_in_keycloak", onlyInKeycloak);
             result.put("only_in_db", onlyInDbDetails);
